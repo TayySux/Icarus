@@ -1,4 +1,5 @@
 using Icarus.Core;
+using Icarus.Tests;
 
 int passed = 0;
 void Assert(bool ok, string message) { if (!ok) throw new Exception(message); }
@@ -57,6 +58,13 @@ await Test("Legacy trigger conditions fail explicitly", () =>
     return Task.CompletedTask;
 });
 Console.WriteLine($"{passed} test groups passed.");
+
+// Phase A measurement layer.
+foreach (var (name, run) in LatencyTests.All().Concat(InputLatencyTests.All())
+    .Concat(ProbeTests.All()).Concat(LanguageGuardTests.All()))
+    await Test(name, run);
+
+Console.WriteLine($"{(passed)} test groups passed total.");
 static MacroProfile Sample() => new() { Name="Test", Steps=[new(){Kind=StepKind.KeyPress,ScanCode=30,DurationMs=1}] };
 sealed class Output(List<string> events) : IInputOutput
 {

@@ -1,6 +1,6 @@
 # Icarus
 
-Private Windows input workbench. **Development increment 0.1, not the requested complete v1.0 suite.** Source committed; Windows build, hardware behavior, and Fortnite compatibility require verification. Do not infer passing tests or working game integration from this README.
+Private Windows input workbench. **Development increment 0.2: measurement layer complete; tweaks, diagnostics and the remaining pages not yet built.** Source committed; Windows build, hardware behavior, and Fortnite compatibility require verification. Do not infer passing tests or working game integration from this README.
 
 ## Implemented in this increment
 
@@ -14,6 +14,68 @@ Private Windows input workbench. **Development increment 0.1, not the requested 
 - Validated snake_case JSON and Base64 sharing; atomic local profile replacement.
 - Radial deadzone/response math and deterministic test executable.
 - Windows GitHub Actions build, test and self-contained publish workflow.
+- **`Icarus.Bench` measurement layer:** latency statistics and propagation floors, real
+  ICMP/TCP probes with loss and jitter, frame-time percentiles with per-frame CPU/GPU
+  attribution, decomposed input latency, controller drift, circularity and achieved poll
+  interval. See *Measurement layer* below.
+
+## Measurement layer (Phase A)
+
+`Icarus.Bench` owns every number the product displays. It contains no estimates and no
+placeholders: where a measurement cannot be taken, the result carries an unavailability
+reason instead of a value.
+
+**Ping and jitter** — real ICMP and TCP probes. Reports minimum, median, p95, RFC 3550
+interarrival jitter, and packet loss. A single average latency is never reported,
+because a mean hides the tail that is actually felt. `Distance.PathFloorKm` derives the
+propagation floor from the measured round trip so an unreachable target is visible as
+such: at 200 km/ms in fibre, 20 ms implies a 4000 km path, and a server 1200 km away
+cannot be reached faster than 6 ms. `Distance.IsPhysicallyInconsistent` flags any
+distance/latency pairing that violates propagation.
+
+Probe targets are never assumed. Epic does not publish a fixed list of regional game
+hostnames, and Fortnite assigns a host per match, so `EndpointCatalog` accepts targets
+only from a live observed game connection (verified) or from explicit user entry
+(clearly labelled as not confirmed). A region that was not probed produces no result
+object, so there is nothing for the UI to display.
+
+**Frame time** — `MsBetweenPresents` per frame, reported as median, 1% low and 0.1% low
+frame *times*. Average FPS is not produced, since averaging is what hides stutter.
+`FrameBound` attributes each frame to CPU or GPU from PresentMon's `CPUBusy`/`GPUBusy`;
+a frame lacking both is `Unknown` rather than guessed. `LowPercentilesReliable` requires
+200 frames for a 1% low and withholds the 0.1% low below 1000 frames, because a
+percentile from too few samples is a single arbitrary value wearing a percentile's
+authority.
+
+**Input latency** — four components measured and labelled independently: peripheral poll
+interval, OS DPC/ISR delay, present-to-photon, and controller poll interval. Each carries
+its own `LatencyEvidence` (`Measured`, `Reported`, `Specified`, `Unavailable`). They are
+deliberately **not summed**: `InputLatencyReport` exposes no total, and a test asserts
+that no such property exists, because a single end-to-end figure would imply a
+composition that none of these measurements establishes.
+
+**Controller diagnostics** — `Drift` measures resting movement over a recorded window and
+suggests the smallest radial deadzone that covers the *worst* observed sample rather
+than the mean, so it stays drift-free as the stick warms. `Circularity` reports percentage
+error against the stick's own best-fit radius plus the effective range, distinguishing a
+non-circular gate from one that is merely small, and returns null for a partial sweep
+rather than judging from too few quadrants. `PollIntervalMonitor` times successive reads
+to report the *achieved* rate, its jitter and its worst 1% — never the requested rate by
+assertion.
+
+## Claim policy
+
+Marketing-style performance guarantees are not permitted anywhere in this project. That
+covers absolute-latency claims, claims that a setting removes network delay entirely,
+and claims that input cannot be detected. `LanguageGuardTests` enforces the ban as a
+build step rather than a review convention, scanning source, markup and documentation
+case-insensitively across whole words, so such a claim cannot reappear in a string,
+tooltip or document without failing the test run.
+
+The guard is itself tested against a table of violating and non-violating samples
+(`GuardDetectsViolations`), because a check that cannot fail proves nothing. Wording that
+merely describes a measurement is unaffected: reporting that a change made no measurable
+difference, or naming a measured latency in milliseconds, passes.
 
 ## Build
 

@@ -1,0 +1,13 @@
+<!--
+  Icarus.Bench owns the measurement layer. Everything it reports is derived from a
+  real observation on the machine it runs on; where a measurement cannot be taken the
+  result carries Unavailable rather than an estimate. It depends on Icarus.Core only
+  for shared contracts and never references WPF.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="../Icarus.Core/Icarus.Core.csproj" />
+  </ItemGroup>
+
+</Project>

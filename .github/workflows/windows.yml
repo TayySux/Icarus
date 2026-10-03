@@ -1,0 +1,25 @@
+name: Windows build and core tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build solution
+        run: dotnet build Icarus.slnx -c Release
+      - name: Execute deterministic core tests
+        run: dotnet run --project tests/Icarus.Tests -c Release --no-build
+      - name: Publish Windows application
+        run: dotnet publish src/Icarus.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o artifacts/Icarus
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Icarus-win-x64-development
+          path: artifacts/Icarus/

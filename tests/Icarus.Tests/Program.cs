@@ -61,7 +61,7 @@ Console.WriteLine($"{passed} test groups passed.");
 
 // Phase A measurement layer.
 foreach (var (name, run) in LatencyTests.All().Concat(InputLatencyTests.All())
-    .Concat(ProbeTests.All()).Concat(LanguageGuardTests.All()))
+    .Concat(ProbeTests.All()).Concat(LanguageGuardTests.All()).Concat(WatchdogTests.All()))
     await Test(name, run);
 
 Console.WriteLine($"{(passed)} test groups passed total.");

@@ -1,4 +1,5 @@
 using Icarus.Bench;
+using Icarus.Core;
 using System.Text.RegularExpressions;
 
 namespace Icarus.Tests;
@@ -16,15 +17,82 @@ internal static class LanguageGuardTests
 {
     private static readonly string[] BannedPhrases =
     [
+        // Absolute-latency claims.
         "0 ping",
         "zero ping",
         "no lag",
         "nolag",
+
+        // Detection claims. No tool can verify these, so none may be made.
         "undetectable",
         "untraceable",
         "instant kill",
         "never miss",
+
+        // Assurance claims. These are banned as claims only: "guaranteed" is caught, but
+        // a disclaimer such as "this is not a guarantee" is honest wording and is allowed
+        // through by the negation check below.
+        "100% safe",
+        "guaranteed",
+        "maximum performance",
+
+        // Marketing filler from the reference copy being replaced.
+        "squeeze every last frame",
     ];
+
+    /// <summary>
+    /// Near-zero figure patterns. The reference bans "any ~0 figure", which is a shape
+    /// rather than a phrase, so it is matched separately: a tilde or approximately-equal
+    /// sign immediately before a zero, with optional trailing unit.
+    /// </summary>
+    private static readonly string[] BannedFigurePatterns =
+    [
+        @"[~≈]\s*0(\.\d+)?\s*(ms|s\b|fps)",
+        @"(under|below)\s*1\s*ms",
+    ];
+
+    private static readonly string[] LatencyNouns =
+    [
+        "latency", "delay", "lag", "ping", "input lag", "stutter", "jitter",
+    ];
+
+    /// <summary>
+    /// "Eliminate" is banned only when it takes a latency noun as its direct object, since
+    /// the word is legitimate elsewhere ("eliminate the background process").
+    ///
+    /// The object is taken as the words between "eliminate" and the end of the clause, up
+    /// to a small run-on limit. Requiring adjacency rather than mere co-occurrence avoids
+    /// a false positive on "eliminate the background process causing stutter", where the
+    /// latency noun names a downstream symptom and not the thing being eliminated.
+    /// </summary>
+    private static bool IsLatencyContextualEliminate(string text)
+    {
+        foreach (Match match in Regex.Matches(text, @"(?<![\w])eliminat\w*(?![\w])",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            int objectStart = match.Index + match.Length;
+            var after = text[objectStart..];
+
+            // The direct object may carry modifiers before the head noun, as in
+            // "eliminate input latency" or "eliminate all visible jitter".
+            var directObject = Regex.Match(after, @"^\s*(?:(?:all|the|your|any|visible|input|raw|total|added)\s+)*([^.;!?]{0,60})",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+            if (!directObject.Success) continue;
+
+            // Only a leading noun phrase counts; anything after a verb-like word means the
+            // latency noun is describing a consequence rather than the object.
+            var candidate = directObject.Groups[1].Value;
+            foreach (var noun in LatencyNouns)
+            {
+                if (Regex.IsMatch(candidate, $@"^\s*{Regex.Escape(noun)}(?![\w])",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    return true;
+            }
+        }
+        return false;
+    }
+
 
     /// <summary>
     /// Files that legitimately discuss the ban itself. Their text is skipped because
@@ -39,6 +107,9 @@ internal static class LanguageGuardTests
     {
         yield return ("No banned performance claims anywhere in the repository", NoBannedPhrases);
         yield return ("The claim guard actually detects violations", GuardDetectsViolations);
+        yield return ("Near-zero figures are caught by shape not phrase", NearZeroFigures);
+        yield return ("Eliminate is banned only in a latency context", LatencyContextualEliminate);
+        yield return ("Declared brand names are exempt but claims around them are not", BrandExemption);
     }
 
     static Task NoBannedPhrases()
@@ -57,11 +128,25 @@ internal static class LanguageGuardTests
             try { text = File.ReadAllText(file); }
             catch (IOException) { continue; }
 
+            // Declared brand names are proper nouns, not claims. Masking them before the
+            // scan means "Zero Delay" is tolerated as a product label while
+            // "reduces delay to zero" is still rejected in the sentence around it.
+            text = ProductNames.MaskDeclaredNames(text);
+
             foreach (var phrase in BannedPhrases)
             {
-                if (ContainsPhrase(text, phrase))
+                if (ContainsClaim(text, phrase))
                     offenders.Add($"{relative}: contains '{phrase}'");
             }
+
+            foreach (var pattern in BannedFigurePatterns)
+            {
+                if (Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    offenders.Add($"{relative}: contains a near-zero figure matching /{pattern}/");
+            }
+
+            if (IsLatencyContextualEliminate(text))
+                offenders.Add($"{relative}: uses 'eliminate' in a latency context");
         }
 
         Check.That(offenders.Count == 0,
@@ -84,6 +169,10 @@ internal static class LanguageGuardTests
             ("No-Lag mode enabled", "no lag"),
             ("Completely undetectable by anti-cheat", "undetectable"),
             ("Undetectable", "undetectable"),
+            ("100% safe to use", "100% safe"),
+            ("Guaranteed frame rate", "guaranteed"),
+            ("Delivers maximum performance", "maximum performance"),
+            ("Squeeze every last frame", "squeeze every last frame"),
         ];
         foreach (var (sample, phrase) in mustCatch)
             Check.That(LanguageGuardTests.Matches(sample, phrase), $"guard missed '{phrase}' in: {sample}");
@@ -108,6 +197,83 @@ internal static class LanguageGuardTests
     }
 
     /// <summary>
+    /// The near-zero rule is a shape, not a phrase, so it needs its own cases. "~0 ms" is
+    /// the form the reference calls out; a genuine sub-millisecond measurement such as
+    /// "0.4 ms" must still be reportable, because that is a real number.
+    /// </summary>
+    static Task NearZeroFigures()
+    {
+        foreach (var sample in new[] { "~0 ms", "≈0 ms", "~0.0 ms", "~0 fps", "under 1 ms", "below 1 ms" })
+        {
+            bool hit = BannedFigurePatterns.Any(p => Regex.IsMatch(sample, p,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+            Check.That(hit, $"near-zero figure not caught: {sample}");
+        }
+
+        // A real measurement must not be mistaken for a marketing figure.
+        foreach (var sample in new[] { "0.4 ms measured", "1.2 ms", "0.9 fps", "12 ms" })
+        {
+            bool hit = BannedFigurePatterns.Any(p => Regex.IsMatch(sample, p,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+            Check.That(!hit, $"genuine measurement flagged: {sample}");
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// "Eliminate" is only a banned claim when a latency noun is nearby. Using it about
+    /// anything else is ordinary English and must not fail the build.
+    /// </summary>
+    static Task LatencyContextualEliminate()
+    {
+        foreach (var sample in new[]
+        {
+            "Eliminate input latency entirely.",
+            "Eliminate the lag spikes.",
+            "Eliminates ping delay outright.",
+        })
+            Check.That(IsLatencyContextualEliminate(sample), $"latency-context eliminate missed: {sample}");
+
+        foreach (var sample in new[]
+        {
+            "Eliminate the background process causing stutter in the capture.",
+            "Eliminate unused allocations in the hot loop.",
+            "The tool does not attempt to eliminate anything it cannot measure.",
+        })
+            Check.That(!IsLatencyContextualEliminate(sample),
+                $"legitimate use of eliminate wrongly flagged: {sample}");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A declared brand name is exempt as a label, but the exemption must not extend to
+    /// the sentence around it. This is the behaviour that lets card 1 be titled
+    /// "Zero Delay" without opening a hole in the guard.
+    /// </summary>
+    static Task BrandExemption()
+    {
+        Check.That(ProductNames.All.Contains("Zero Delay"), "brand name is declared");
+
+        // The brand name itself is masked away and survives the scan.
+        var masked = ProductNames.MaskDeclaredNames("Card one is called Zero Delay.");
+        Check.That(!LanguageGuardTests.Matches(masked, "zero delay"),
+            "declared brand name should be masked before scanning");
+
+        // Masking must not swallow the surrounding claim. The masked brand sits in the same
+        // sentence as the claims, so the claims must still be found.
+        var sneaky = ProductNames.MaskDeclaredNames("Zero Delay is guaranteed and reaches 0 ping.");
+        Check.That(LanguageGuardTests.Matches(sneaky, "0 ping"),
+            "a claim next to a brand name must still be caught");
+        Check.That(LanguageGuardTests.Matches(sneaky, "guaranteed"),
+            "an assurance claim next to a brand name must still be caught");
+
+        // An undeclared near-miss must not be treated as the brand.
+        Check.That(ProductNames.MaskDeclaredNames("Zero Delays are reduced") == "Zero Delays are reduced",
+            "a plural must not be masked as the brand name");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Whole-word, case-insensitive match with a small allowance for the hyphen and
     /// space variants that appear in marketing-style copy.
     /// </summary>
@@ -117,6 +283,43 @@ internal static class LanguageGuardTests
     /// exist in the repository in order to test it.
     /// </summary>
     internal static bool Matches(string text, string phrase) => ContainsPhrase(text, phrase);
+
+    /// <summary>
+    /// A banned phrase counts as a violation only when it is actually being asserted.
+    /// A disclaimer that names the same word in order to reject it — "this is not a
+    /// guarantee", "no unverifiable claims" — is the opposite of a claim, and banning it
+    /// would make honest documentation impossible to write.
+    ///
+    /// The check looks back a short window from each match for a negation or hedge. This
+    /// is a wording heuristic, not natural language understanding, so it errs toward
+    /// catching: anything it does not recognise as a disclaimer still fails.
+    /// </summary>
+    private static bool ContainsClaim(string text, string phrase)
+    {
+        foreach (Match match in Regex.Matches(text,
+            $@"(?<![\w]){Regex.Escape(phrase).Replace(@"\ ", @"[\s\-]+")}(?![\w])",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            int start = Math.Max(0, match.Index - 90);
+            var window = text.Substring(start, match.Index - start);
+            if (!DisclaimerMarkers.Any(m => Regex.IsMatch(window,
+                    $@"(?<![\w]){Regex.Escape(m)}(?![\w])",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Words that, appearing shortly before a banned phrase, mark it as a rejection of
+    /// the phrase rather than an assertion of it.
+    /// </summary>
+    private static readonly string[] DisclaimerMarkers =
+    [
+        "not", "no", "never", "without", "cannot", "can't", "neither", "nor",
+        "isn't", "aren't", "doesn't", "do not", "does not", "refuses", "rejects",
+        "banned", "prohibited", "disallowed", "false", "unverified",
+    ];
 
     private static bool ContainsPhrase(string text, string phrase)
     {

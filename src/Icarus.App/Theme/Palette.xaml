@@ -1,0 +1,67 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    Icarus visual language.
+
+    Two deliberate substitutions from the web reference:
+      - backdrop-filter blur has no WPF equivalent, so glass is a layered translucent
+        fill over the gradient rather than a true backdrop blur. Depth comes from
+        stacked opacity, matching the reference's own guidance.
+      - prefers-reduced-motion maps to SystemParameters.ClientAreaAnimation, which
+        Windows exposes from the OS accessibility setting.
+  -->
+
+  <!-- ============================ Palette ============================ -->
+  <Color x:Key="Color.BgTop">#FF05070D</Color>
+  <Color x:Key="Color.BgBottom">#FF0A0E1A</Color>
+  <Color x:Key="Color.GlassFill">#E60D1220</Color>
+  <Color x:Key="Color.GlassFillHover">#F20E1424</Color>
+  <Color x:Key="Color.Border">#FF1A2235</Color>
+  <Color x:Key="Color.BorderHover">#FF2A3A57</Color>
+  <Color x:Key="Color.AccentBlue">#FF3B82F6</Color>
+  <Color x:Key="Color.AccentCyan">#FF22D3EE</Color>
+  <Color x:Key="Color.Violet">#FF6366F1</Color>
+  <Color x:Key="Color.TextPrimary">#FFE8EDF5</Color>
+  <Color x:Key="Color.TextSecondary">#FF8B95A8</Color>
+  <Color x:Key="Color.TextMicro">#FF5A6478</Color>
+  <Color x:Key="Color.Success">#FF34D399</Color>
+  <Color x:Key="Color.Warning">#FFFBBF24</Color>
+  <Color x:Key="Color.Danger">#FFF43F5E</Color>
+
+  <SolidColorBrush x:Key="Brush.Border" Color="{StaticResource Color.Border}"/>
+  <SolidColorBrush x:Key="Brush.BorderHover" Color="{StaticResource Color.BorderHover}"/>
+  <SolidColorBrush x:Key="Brush.TextPrimary" Color="{StaticResource Color.TextPrimary}"/>
+  <SolidColorBrush x:Key="Brush.TextSecondary" Color="{StaticResource Color.TextSecondary}"/>
+  <SolidColorBrush x:Key="Brush.TextMicro" Color="{StaticResource Color.TextMicro}"/>
+  <SolidColorBrush x:Key="Brush.Success" Color="{StaticResource Color.Success}"/>
+  <SolidColorBrush x:Key="Brush.Warning" Color="{StaticResource Color.Warning}"/>
+  <SolidColorBrush x:Key="Brush.Danger" Color="{StaticResource Color.Danger}"/>
+  <SolidColorBrush x:Key="Brush.Violet" Color="{StaticResource Color.Violet}"/>
+  <SolidColorBrush x:Key="Brush.AccentCyan" Color="{StaticResource Color.AccentCyan}"/>
+
+  <!--
+    Accent gradient for primary actions and card highlights. Near-black text sits on the
+    lighter end of this ramp, which is why buttons use Brush.OnAccent rather than white.
+  -->
+  <LinearGradientBrush x:Key="Brush.Accent" StartPoint="0,0" EndPoint="1,0">
+    <GradientStop Color="{StaticResource Color.AccentBlue}" Offset="0"/>
+    <GradientStop Color="{StaticResource Color.AccentCyan}" Offset="1"/>
+  </LinearGradientBrush>
+
+  <LinearGradientBrush x:Key="Brush.AccentVertical" StartPoint="0,0" EndPoint="0,1">
+    <GradientStop Color="{StaticResource Color.AccentBlue}" Offset="0"/>
+    <GradientStop Color="{StaticResource Color.AccentCyan}" Offset="1"/>
+  </LinearGradientBrush>
+
+  <SolidColorBrush x:Key="Brush.OnAccent" Color="#FF05070D"/>
+  <SolidColorBrush x:Key="Brush.Glass" Color="{StaticResource Color.GlassFill}"/>
+  <SolidColorBrush x:Key="Brush.GlassHover" Color="{StaticResource Color.GlassFillHover}"/>
+
+  <!-- Background gradient: near-black to deep navy, vertical, never flat. -->
+  <LinearGradientBrush x:Key="Brush.Background" StartPoint="0,0" EndPoint="0,1">
+    <GradientStop Color="{StaticResource Color.BgTop}" Offset="0"/>
+    <GradientStop Color="{StaticResource Color.BgBottom}" Offset="1"/>
+  </LinearGradientBrush>
+
+</ResourceDictionary>

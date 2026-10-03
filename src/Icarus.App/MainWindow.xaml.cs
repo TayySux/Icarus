@@ -6,6 +6,8 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using Icarus.Core;
 using Icarus.Native;
+using Fg = Icarus.Native.Foreground;
+using Fg = Icarus.Native.Foreground;
 
 namespace Icarus.App;
 public partial class MainWindow : Window
@@ -56,9 +58,9 @@ public partial class MainWindow : Window
     }
     private void GuardTick()
     {
-        string name = Foreground.ProcessName;
-        if (running != null && activeProfile != null && focusRequired && !Matches(name, activeProfile.FocusWindow)) running.Cancel();
-        Status.Text = $"{(allowOutput ? "ARMED" : "DISARMED")} | Foreground: {name} | Runs: {live.CompletedRuns} | Held: {live.HeldCount} | FPS / ping / pad: unavailable";
+        string foregroundProcess = Fg.ProcessName;
+        if (running != null && activeProfile != null && focusRequired && !Matches(foregroundProcess, activeProfile.FocusWindow)) running.Cancel();
+        Status.Text = $"{(allowOutput ? "ARMED" : "DISARMED")} | Foreground: {foregroundProcess} | Runs: {live.CompletedRuns} | Held: {live.HeldCount} | FPS / ping / pad: unavailable";
     }
     private static bool Matches(string actual, string expected) => string.Equals(actual, Path.GetFileNameWithoutExtension(expected), StringComparison.OrdinalIgnoreCase);
     private async Task StartAsync(bool preview)
@@ -68,7 +70,7 @@ public partial class MainWindow : Window
         try
         {
             var profile = ProfileCodec.FromJson(Editor.Text);
-            if (!preview && focusRequired && (string.IsNullOrWhiteSpace(profile.FocusWindow) || !Matches(Foreground.ProcessName, profile.FocusWindow)))
+            if (!preview && focusRequired && (string.IsNullOrWhiteSpace(profile.FocusWindow) || !Matches(Fg.ProcessName, profile.FocusWindow)))
                 throw new InvalidOperationException("Foreground process does not match profile focus_window.");
             using var cancel = new CancellationTokenSource();
             running = cancel;
@@ -76,7 +78,7 @@ public partial class MainWindow : Window
             var engine = preview ? new MacroEngine(new PreviewOutput(Log), new MonotonicClock()) : live;
             bool requireFocus = focusRequired;
             Log($"{(preview ? "Preview" : "Live")} started; minimum hold target {Timing.MinimumHold(profile.MeasuredFps, profile.FallbackHoldMs)} ms. FPS source: {(profile.MeasuredFps is null ? "unavailable; fallback" : "user-supplied measurement")}");
-            await Task.Run(() => engine.RunAsync(profile, () => preview || (!cancel.IsCancellationRequested && (!requireFocus || Matches(Foreground.ProcessName, profile.FocusWindow))), cancel.Token));
+            await Task.Run(() => engine.RunAsync(profile, () => preview || (!cancel.IsCancellationRequested && (!requireFocus || Matches(Fg.ProcessName, profile.FocusWindow))), cancel.Token));
             Log("Sequence completed.");
         }
         catch (OperationCanceledException) { Log("Sequence canceled; release cleanup attempted."); }

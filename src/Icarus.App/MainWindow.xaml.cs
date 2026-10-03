@@ -7,7 +7,6 @@ using System.Windows.Threading;
 using Icarus.Core;
 using Icarus.Native;
 using Fg = Icarus.Native.Foreground;
-using Fg = Icarus.Native.Foreground;
 
 namespace Icarus.App;
 public partial class MainWindow : Window

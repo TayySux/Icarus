@@ -63,6 +63,47 @@ rather than judging from too few quadrants. `PollIntervalMonitor` times successi
 to report the *achieved* rate, its jitter and its worst 1% — never the requested rate by
 assertion.
 
+## Crash-proof release (Layer 1)
+
+A macro must never leave an input stuck down. Managed cleanup handles the ordinary cases —
+completion, cancellation, focus loss, disconnect — but it cannot run when a process is
+killed, loses power, or hangs. The guarantee is therefore enforced from *outside* the
+process by a separate watchdog executable.
+
+- **`InputLease`** (Icarus.Core) holds the shared state: owning pid, a monotonic heartbeat
+  counter, a generation, and the set of owned inputs. The heartbeat is a counter rather than
+  a timestamp so a clock change cannot make a dead process look alive.
+- **`SharedLease`** (Icarus.Native) is the cross-process channel, a memory-mapped file
+  storing fixed-width primitives so there is no torn-read window.
+- **`WatchdogPolicy.Decide`** is the release policy, written as pure logic so every branch
+  is reachable in a test without killing a process.
+- **`Icarus.Watchdog`** is the standalone process. It reads the lease, asks the policy
+  whether a release is due, sends key-ups, and clears the list.
+
+The decision is deliberately one-directional: when the watchdog is unsure it releases. An
+early key-up costs the user one extra press; a late one leaves their keyboard stuck with no
+indication why. Clearing the held list only happens after a key-up is confirmed sent, so a
+failed release stays tracked and is retried rather than silently forgotten.
+
+### Verified end to end
+
+`WatchdogIntegrationTests.KilledOwnerReleasesKey` starts a real helper process that claims
+the lease and presses a key, starts a watchdog, then `TerminateProcess`es the helper — no
+`finally`, no `Dispose`, no graceful shutdown — and asserts via `GetAsyncKeyState` that the
+key comes back up. The test distinguishes "the key is stuck" from "this check cannot observe
+injected input", so a false negative cannot be mistaken for a broken guarantee.
+
+Two defects were found by running it, both of which would have made the mechanism silently
+inert:
+
+1. The mapping was created with a `Local\` name. Session-scoped mappings are unreachable
+   across sessions, so the watchdog never saw the owner's state.
+2. More subtly, a memory-mapped file is destroyed when its **last** handle closes. A killed
+   owner therefore takes the lease with it, and a watchdog that had not already opened the
+   mapping finds nothing to read. The watchdog must be started — and hold its handle open —
+   *before* any input is claimed. Starting it lazily at release time is too late by
+   definition.
+
 ## Claim policy
 
 Marketing-style performance guarantees are not permitted anywhere in this project. That

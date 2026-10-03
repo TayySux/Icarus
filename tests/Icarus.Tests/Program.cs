@@ -2,6 +2,16 @@ using Icarus.Core;
 using Icarus.Tests;
 
 int passed = 0;
+
+// Helper mode: re-enter this same test executable to act as the process that holds a key
+// down and is then killed. A separate process is required because a thread inside this
+// runner would be shut down cleanly by the runtime, which would run disposal and defeat
+// the point of the crash test.
+if (args.Length >= 2 && args[0] == "--hold-key")
+{
+    await HoldKeyUntilKilledAsync(ushort.Parse(args[1]));
+    return 0;
+}
 void Assert(bool ok, string message) { if (!ok) throw new Exception(message); }
 async Task Test(string name, Func<Task> action) { await action(); Console.WriteLine("PASS " + name); passed++; }
 await Test("Frame hold targets", () => { Assert(Timing.MinimumHold(60,25)==25,"60 FPS"); Assert(Timing.MinimumHold(144,25)==11,"144 FPS"); Assert(Timing.MinimumHold(240,25)==7,"240 FPS"); Assert(Timing.MinimumHold(null,25)==25,"unavailable FPS"); return Task.CompletedTask; });
@@ -61,10 +71,61 @@ Console.WriteLine($"{passed} test groups passed.");
 
 // Phase A measurement layer.
 foreach (var (name, run) in LatencyTests.All().Concat(InputLatencyTests.All())
-    .Concat(ProbeTests.All()).Concat(LanguageGuardTests.All()).Concat(WatchdogTests.All()))
+    .Concat(ProbeTests.All()).Concat(LanguageGuardTests.All()).Concat(WatchdogTests.All())
+    .Concat(WatchdogIntegrationTests.All()))
     await Test(name, run);
 
 Console.WriteLine($"{(passed)} test groups passed total.");
+return 0;
+
+/// <summary>
+/// Claims the lease, presses one key, records it, then waits to be killed.
+///
+/// The ordering is deliberate: the key is recorded in shared memory before it is pressed,
+/// so there is no window in which the key is physically down with nothing tracking it. The
+/// reverse order would reintroduce exactly the failure this whole mechanism prevents.
+///
+/// No cleanup is performed on the way out. This function is expected to be terminated
+/// mid-wait by TerminateProcess, which is the condition being tested.
+/// </summary>
+static async Task HoldKeyUntilKilledAsync(ushort scanCode)
+{
+    using var lease = Icarus.Native.SharedLease.CreateOrOpen();
+    lease.Claim(Environment.ProcessId, generation: Environment.TickCount64);
+
+    var input = new OwnedInput(IsMouse: false, Code: scanCode, Extended: false);
+
+    // Record first, then press. See the note above on ordering.
+    if (!lease.Add(input))
+        throw new InvalidOperationException("input lease is full; cannot guarantee release");
+
+    var output = new Icarus.Native.WindowsInput();
+    output.Down(input.ToToken());
+
+    // Announce readiness on stdout so the test knows the key is down.
+    Console.WriteLine("HOLDING");
+    Console.Out.Flush();
+
+    // Pulse the heartbeat so the watchdog sees a live owner. A dedicated loop, because the
+    // whole point is that this process is alive and healthy right up until it is killed.
+    using var cts = new CancellationTokenSource();
+    var pulse = Task.Run(async () =>
+    {
+        while (!cts.IsCancellationRequested)
+        {
+            lease.Pulse();
+            try { await Task.Delay(100, cts.Token); } catch (OperationCanceledException) { break; }
+        }
+    });
+
+    // Block forever. The only way out is being killed.
+    try { await Task.Delay(Timeout.Infinite, cts.Token); }
+    catch (OperationCanceledException) { }
+
+    // Unreachable in practice. If this ever runs, the release still happens correctly.
+    output.Up(input.ToToken());
+}
+
 static MacroProfile Sample() => new() { Name="Test", Steps=[new(){Kind=StepKind.KeyPress,ScanCode=30,DurationMs=1}] };
 sealed class Output(List<string> events) : IInputOutput
 {

@@ -92,6 +92,25 @@ public sealed class InputLease
     }
 
     /// <summary>
+    /// Populates a lease read from another process. Used by the watchdog, which observes
+    /// state rather than owning it. The in-process mutation methods stay available so the
+    /// same policy code can be exercised against a snapshot in tests.
+    /// </summary>
+    public void Load(long heartbeat, int ownerPid, long generation, bool releaseRequested,
+        IEnumerable<OwnedInput> held)
+    {
+        lock (gate)
+        {
+            this.heartbeat = heartbeat;
+            this.ownerPid = ownerPid;
+            this.generation = generation;
+            this.releaseRequested = releaseRequested;
+            this.held.Clear();
+            foreach (var input in held) this.held.Add(input);
+        }
+    }
+
+    /// <summary>
     /// Claims the lease for a process. Any inputs recorded by a previous owner are dropped,
     /// because that owner's watchdog has already released them; carrying them forward would
     /// make the new owner responsible for keys it never pressed.

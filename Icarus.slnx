@@ -2,6 +2,7 @@
   <Project Path="src/Icarus.Core/Icarus.Core.csproj" />
   <Project Path="src/Icarus.Native/Icarus.Native.csproj" />
   <Project Path="src/Icarus.Bench/Icarus.Bench.csproj" />
+  <Project Path="src/Icarus.Watchdog/Icarus.Watchdog.csproj" />
   <Project Path="src/Icarus.App/Icarus.App.csproj" />
   <Project Path="tests/Icarus.Tests/Icarus.Tests.csproj" />
 </Solution>

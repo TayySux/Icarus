@@ -25,30 +25,79 @@ public sealed class MonotonicClock : IClock
         }
     }
 }
-public sealed class MacroEngine(IInputOutput output, IClock clock)
+public sealed class MacroEngine
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly HashSet<InputToken> held = [];
     private readonly object sync = new();
+    private readonly IInputOwnership ownership;
+    private readonly IHeartbeat? heartbeat;
+
+    /// <summary>
+    /// <paramref name="ownership"/> records every press in the shared lease so a separate
+    /// watchdog can release it if this process dies. Ownership is required rather than
+    /// optional: an engine that could silently run without it would make cross-process
+    /// protection something that quietly vanishes, so callers must pass an explicit
+    /// NullInputOwnership to accept reduced protection knowingly.
+    ///
+    /// <paramref name="heartbeat"/> is pulsed from its own thread. It must not be the macro
+    /// thread, because a blocked heartbeat is indistinguishable from a dead process to the
+    /// watchdog and would release keys during a legitimately long macro.
+    /// </summary>
+    public MacroEngine(IInputOutput output, IClock clock, IInputOwnership ownership,
+        IHeartbeat? heartbeat = null)
+    {
+        this.output = output;
+        this.clock = clock;
+        this.ownership = ownership ?? throw new ArgumentNullException(nameof(ownership));
+        this.heartbeat = heartbeat;
+    }
+
+    private readonly IInputOutput output;
+    private readonly IClock clock;
+
     public int HeldCount { get { lock (sync) return held.Count; } }
     public long CompletedRuns => Interlocked.Read(ref completed);
     private long completed;
     public event Action<string>? Trace;
+    /// <summary>
+    /// Presses an input, recording it for cross-process recovery first.
+    ///
+    /// The order is the whole point. Recording before pressing means there is no instant at
+    /// which the key is physically down with nothing tracking it. If this process is killed
+    /// in the gap between the two calls, the watchdog still knows to send the key-up.
+    /// Pressing first and recording afterwards would leave exactly the stranded-key window
+    /// this mechanism exists to close.
+    ///
+    /// If the record cannot be stored, the press is refused rather than performed: an
+    /// untrackable key is worse than a macro that declines to run.
+    /// </summary>
     private void Press(InputToken input)
     {
         lock (sync)
         {
             if (!held.Add(input)) throw new InvalidOperationException("Input already held; refusing duplicate down.");
+            if (!ownership.Record(input))
+            {
+                held.Remove(input);
+                throw new InvalidOperationException(
+                    "Could not record this input for crash recovery, so it was not pressed. "
+                    + "Pressing an untrackable key risks leaving it stuck if the process is killed.");
+            }
             output.Down(input);
         }
         Trace?.Invoke($"Down {input}");
     }
+
     private void Release(InputToken input)
     {
         lock (sync)
         {
             if (!held.Contains(input)) throw new InvalidOperationException("Cannot release an input not owned by this run.");
             output.Up(input);
+            // Forget only after the key-up is confirmed sent. A failed release must stay
+            // tracked so the watchdog, or the next pass, can retry it.
+            ownership.Forget(input);
             held.Remove(input);
         }
         Trace?.Invoke($"Up {input}");
@@ -60,7 +109,9 @@ public sealed class MacroEngine(IInputOutput output, IClock clock)
         {
             foreach (var input in held.ToArray())
             {
-                try { output.Up(input); held.Remove(input); }
+                // Same ordering rule as Release: key-up first, then forget. If the key-up
+                // fails the input stays recorded so the watchdog can still recover it.
+                try { output.Up(input); ownership.Forget(input); held.Remove(input); }
                 catch (Exception e) { failures.Add(e); }
             }
         }

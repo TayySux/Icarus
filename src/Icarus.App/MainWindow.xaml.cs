@@ -11,7 +11,15 @@ using Fg = Icarus.Native.Foreground;
 namespace Icarus.App;
 public partial class MainWindow : Window
 {
-    private readonly MacroEngine live = new(new WindowsInput(), new MonotonicClock());
+    // Cross-process key recovery. The watchdog must be running and holding the shared
+    // mapping open BEFORE any macro can press a key, because a memory-mapped file dies with
+    // its last handle: an owner that is killed first takes the lease with it and there is
+    // nothing left for anyone to read. The starting order in the constructor is load-bearing.
+    private readonly WatchdogSupervisor watchdog = new();
+    private readonly IInputOwnership ownership;
+    private readonly IHeartbeat? heartbeat;
+    private readonly MacroEngine live;
+    private bool crashRecoveryActive;
     private readonly string profilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Icarus", "profiles", "workbench.json");
     private CancellationTokenSource? running;
     private MacroProfile? activeProfile;
@@ -22,7 +30,46 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        // STARTUP ORDER IS LOAD-BEARING. The watchdog is started first and must hold the
+        // shared mapping open before this process claims the lease or presses anything. A
+        // memory-mapped file is destroyed when its last handle closes, so if the owner dies
+        // first the lease goes with it and the watchdog finds nothing to release. Claiming
+        // before the watchdog is up would reintroduce exactly that failure.
+        watchdog.Start();
+        crashRecoveryActive = watchdog.IsRunning;
+
+        if (crashRecoveryActive)
+        {
+            try
+            {
+                ownership = new SharedInputOwnership(SharedLease.CreateOrOpen());
+                ownership.Claim();
+                heartbeat = new TimerHeartbeat(ownership);
+                heartbeat.Start();
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Fall back rather than refuse to start, but say so plainly: without a
+                // watchdog a killed process can leave a key held.
+                ownership = new NullInputOwnership();
+                heartbeat = null;
+                crashRecoveryActive = false;
+            }
+        }
+        else
+        {
+            ownership = new NullInputOwnership();
+            heartbeat = null;
+        }
+
+        live = new MacroEngine(new WindowsInput(), new MonotonicClock(), ownership, heartbeat);
         live.Trace += Log;
+
+        Status.Text = crashRecoveryActive
+            ? "DISARMED | crash recovery ACTIVE (watchdog running)"
+            : "DISARMED | crash recovery UNAVAILABLE, a killed process could leave a key held. "
+              + (watchdog.UnavailableReason ?? "");
         // A delay-only profile is inert by design, not a fabricated detected binding.
         Editor.Text = ProfileCodec.ToJson(new MacroProfile { Name = "My sequence", Steps = [new() { Kind = StepKind.Delay, DurationMs = 100 }] });
         try { if (File.Exists(profilePath)) Editor.Text = ProfileCodec.ToJson(ProfileCodec.FromJson(File.ReadAllText(profilePath))); }
@@ -74,7 +121,12 @@ public partial class MainWindow : Window
             using var cancel = new CancellationTokenSource();
             running = cancel;
             activeProfile = preview ? null : profile;
-            var engine = preview ? new MacroEngine(new PreviewOutput(Log), new MonotonicClock()) : live;
+            // Preview sends nothing, so it has no keys to protect. NullInputOwnership is
+            // explicit rather than omitted: the reduced protection is a deliberate choice
+            // for a mode that cannot strand a key, not an oversight.
+            var engine = preview
+                ? new MacroEngine(new PreviewOutput(Log), new MonotonicClock(), new NullInputOwnership())
+                : live;
             bool requireFocus = focusRequired;
             Log($"{(preview ? "Preview" : "Live")} started; minimum hold target {Timing.MinimumHold(profile.MeasuredFps, profile.FallbackHoldMs)} ms. FPS source: {(profile.MeasuredFps is null ? "unavailable; fallback" : "user-supplied measurement")}");
             await Task.Run(() => engine.RunAsync(profile, () => preview || (!cancel.IsCancellationRequested && (!requireFocus || Matches(Fg.ProcessName, profile.FocusWindow))), cancel.Token));
@@ -139,6 +191,15 @@ public partial class MainWindow : Window
         closing = true; guard.Stop();
         UnregisterHotKey(hwnd, 1); UnregisterHotKey(hwnd, 2);
         source?.RemoveHook(WndProc);
+
+        // Orderly shutdown. Managed release above covers the normal case; stopping the
+        // heartbeat and asking the watchdog to release is belt and braces for anything the
+        // in-process set missed. The supervisor is disposed last so the watchdog outlives
+        // the request to release.
+        heartbeat?.Stop();
+        ownership.RequestRelease();
+        heartbeat?.Dispose();
+        watchdog.Dispose();
         Close();
     }
     [DllImport("user32.dll", SetLastError = true)] private static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint virtualKey);

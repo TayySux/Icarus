@@ -1,1 +1,6 @@
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>WinExe</OutputType><UseWPF>true</UseWPF><ApplicationManifest>app.manifest</ApplicationManifest><RuntimeIdentifier>win-x64</RuntimeIdentifier><PlatformTarget>x64</PlatformTarget></PropertyGroup><ItemGroup><ProjectReference Include="../Icarus.Core/Icarus.Core.csproj" /><ProjectReference Include="../Icarus.Native/Icarus.Native.csproj" /><ProjectReference Include="../Icarus.Bench/Icarus.Bench.csproj" /></ItemGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>WinExe</OutputType><UseWPF>true</UseWPF><ApplicationManifest>app.manifest</ApplicationManifest><RuntimeIdentifier>win-x64</RuntimeIdentifier><PlatformTarget>x64</PlatformTarget></PropertyGroup><ItemGroup><ProjectReference Include="../Icarus.Core/Icarus.Core.csproj" /><ProjectReference Include="../Icarus.Native/Icarus.Native.csproj" /><ProjectReference Include="../Icarus.Bench/Icarus.Bench.csproj" /><!--
+    The watchdog must ship beside the application. It cannot be a plain reference: the app
+    does not call into it, it launches it as a separate process. ReferenceOutputAssembly is
+    off so no reference is added, and OutputItemType/CopyToOutputDirectory put the binary in
+    the app's output folder where WatchdogSupervisor looks for it.
+  --><ProjectReference Include="../Icarus.Watchdog/Icarus.Watchdog.csproj" ReferenceOutputAssembly="false" OutputItemType="Content" CopyToOutputDirectory="PreserveNewest" /></ItemGroup></Project>

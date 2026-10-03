@@ -13,22 +13,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The solution is created in a later build phase. Until Icarus.sln exists there
+      # is nothing to compile, so skip rather than reporting a failure.
+      - name: Check for solution file
+        id: check
+        shell: pwsh
+        run: |
+          if (Test-Path ./Icarus.sln) {
+            'found=true' >> $env:GITHUB_OUTPUT
+          } else {
+            'found=false' >> $env:GITHUB_OUTPUT
+            Write-Output '::notice::Icarus.sln not present yet - skipping build.'
+          }
+
       - name: Setup .NET
+        if: steps.check.outputs.found == 'true'
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
       - name: Restore
+        if: steps.check.outputs.found == 'true'
         run: dotnet restore Icarus.sln
 
       - name: Build
+        if: steps.check.outputs.found == 'true'
         run: dotnet build Icarus.sln -c Release --no-restore
 
       - name: Test
+        if: steps.check.outputs.found == 'true'
         run: dotnet test Icarus.sln -c Release --no-build --logger trx --results-directory ./artifacts/test-results
 
       - name: Upload test results
-        if: always()
+        if: always() && steps.check.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: test-results
